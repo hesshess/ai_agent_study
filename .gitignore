@@ -10,3 +10,15 @@ wheels/
 .venv
 
 .env
+
+
+# DB
+*.db
+*.db-shm
+*.db-wal
+
+# Streamlit
+.streamlit/
+
+# VSCode
+.vscode/
