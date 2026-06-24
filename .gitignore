@@ -22,3 +22,10 @@ wheels/
 
 # VSCode
 .vscode/
+
+/restaurant-bot/__pycache__/
+/restaurant-bot/*.py[oc]
+/restaurant-bot/build/
+/restaurant-bot/dist/
+/restaurant-bot/wheels/
+/restaurant-bot/*.egg-info

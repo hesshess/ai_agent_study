@@ -2,20 +2,29 @@ import asyncio
 
 import dotenv
 import streamlit as st
-from agents import Runner
+from agents import (
+    InputGuardrailTripwireTriggered,
+    OutputGuardrailTripwireTriggered,
+    Runner,
+)
 
+from models import RestaurantCustomerContext
 from my_agents.triage_agent import triage_agent
 
 dotenv.load_dotenv()
+
+customer_context = RestaurantCustomerContext(
+    name="Guest",
+    tier="basic",
+    phone="010-1234-5678",
+)
 
 
 def ensure_ui_state():
     if "restaurant_bot_chat_history" not in st.session_state:
         st.session_state["restaurant_bot_chat_history"] = []
-
-
-def format_handoff_message(agent_name: str) -> str:
-    return f"[{agent_name}로 handoff]"
+    if "restaurant_bot_pending_handoffs" not in st.session_state:
+        st.session_state["restaurant_bot_pending_handoffs"] = []
 
 
 def build_runner_input():
@@ -32,7 +41,7 @@ def render_history():
     for entry in st.session_state["restaurant_bot_chat_history"]:
         with st.chat_message(entry["role"]):
             for handoff_message in entry.get("handoffs", []):
-                st.caption(handoff_message)
+                st.caption(handoff_message["label"])
             if entry.get("text"):
                 st.write(entry["text"])
 
@@ -44,40 +53,52 @@ async def run_restaurant_bot():
         text_placeholder = st.empty()
         response_text = ""
         handoff_messages = []
+        st.session_state["restaurant_bot_pending_handoffs"] = []
 
-        stream = Runner.run_streamed(
-            triage_agent,
-            build_runner_input(),
-        )
+        try:
+            stream = Runner.run_streamed(
+                triage_agent,
+                build_runner_input(),
+                context=customer_context,
+            )
 
-        async for event in stream.stream_events():
-            if event.type == "agent_updated_stream_event":
-                handoff_label = format_handoff_message(event.new_agent.name)
-                if handoff_label and handoff_label not in handoff_messages:
-                    handoff_messages.append(handoff_label)
-                    handoff_placeholder.caption("\n".join(handoff_messages))
-                    status_container.update(label=handoff_label, state="running")
-                continue
+            async for event in stream.stream_events():
+                pending_handoffs = st.session_state["restaurant_bot_pending_handoffs"]
+                if pending_handoffs:
+                    visible_labels = [item["label"] for item in pending_handoffs]
+                    handoff_placeholder.caption("\n".join(visible_labels))
+                    handoff_messages = list(pending_handoffs)
+                    status_container.update(label=visible_labels[-1], state="running")
 
-            if event.type == "run_item_stream_event" and event.name == "handoff_occured":
-                target_name = event.item.target_agent.name
-                handoff_label = format_handoff_message(target_name)
-                if handoff_label and handoff_label not in handoff_messages:
-                    handoff_messages.append(handoff_label)
-                    handoff_placeholder.caption("\n".join(handoff_messages))
-                    status_container.update(label=handoff_label, state="running")
-                continue
+                if event.type != "raw_response_event":
+                    continue
 
-            if event.type != "raw_response_event":
-                continue
-
-            if event.data.type == "response.output_text.delta":
-                response_text += event.data.delta
-                text_placeholder.write(response_text)
-            elif event.data.type == "response.completed":
-                status_container.update(label="응답 완료", state="complete")
-                if response_text:
+                if event.data.type == "response.output_text.delta":
+                    response_text += event.data.delta
                     text_placeholder.write(response_text)
+                elif event.data.type == "response.completed":
+                    status_container.update(label="응답 완료", state="complete")
+                    if response_text:
+                        text_placeholder.write(response_text)
+        except InputGuardrailTripwireTriggered as exc:
+            info = exc.guardrail_result.output.output_info
+            response_text = (
+                "저는 레스토랑 관련 질문에 대해서만 도와드리고 있어요. "
+                "메뉴를 확인하거나, 예약하거나, 음식을 주문할 수 있어요."
+                if getattr(info, "is_off_topic", False)
+                else "불편한 표현은 도와드리기 어려워요. 메뉴, 주문, 예약, 불만 접수처럼 레스토랑 관련 내용으로 말씀해 주세요."
+            )
+            status_container.update(label="입력 가드레일 작동", state="complete")
+            text_placeholder.write(response_text)
+            handoff_messages = [{"label": "[input guardrail 작동]"}]
+        except OutputGuardrailTripwireTriggered as exc:
+            response_text = (
+                "죄송합니다. 더 정중하고 안전한 방식으로만 안내드릴 수 있어요. "
+                "메뉴, 주문, 예약, 불만 해결과 관련된 내용으로 다시 말씀해 주세요."
+            )
+            status_container.update(label="출력 가드레일 작동", state="complete")
+            text_placeholder.write(response_text)
+            handoff_messages = [{"label": "[output guardrail 작동]"}]
 
         st.session_state["restaurant_bot_chat_history"].append(
             {
@@ -110,12 +131,10 @@ if prompt:
     asyncio.run(run_restaurant_bot())
 
 with st.sidebar:
-    st.subheader("전문 에이전트")
-    st.write("`Triage Agent`")
-    st.write("`Menu Agent`")
-    st.write("`Order Agent`")
-    st.write("`Reservation Agent`")
-
-    if st.button("대화 초기화"):
+    reset = st.button("Reset memory")
+    if reset:
         st.session_state["restaurant_bot_chat_history"] = []
+        st.session_state["restaurant_bot_pending_handoffs"] = []
         st.rerun()
+
+    st.write(st.session_state["restaurant_bot_chat_history"])
