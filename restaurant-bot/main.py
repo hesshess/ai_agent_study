@@ -40,6 +40,9 @@ def build_runner_input():
 def render_history():
     for entry in st.session_state["restaurant_bot_chat_history"]:
         with st.chat_message(entry["role"]):
+            agent_label = entry.get("agent_label")
+            if agent_label:
+                st.caption(f"응답 에이전트: {agent_label}")
             for handoff_message in entry.get("handoffs", []):
                 st.caption(handoff_message["label"])
             if entry.get("text"):
@@ -49,11 +52,14 @@ def render_history():
 async def run_restaurant_bot():
     with st.chat_message("assistant"):
         status_container = st.status("요청을 파악하는 중...", expanded=True)
+        agent_placeholder = st.empty()
         handoff_placeholder = st.empty()
         text_placeholder = st.empty()
         response_text = ""
         handoff_messages = []
+        responding_agent = "Triage Agent"
         st.session_state["restaurant_bot_pending_handoffs"] = []
+        agent_placeholder.caption(f"응답 에이전트: {responding_agent}")
 
         try:
             stream = Runner.run_streamed(
@@ -68,6 +74,10 @@ async def run_restaurant_bot():
                     visible_labels = [item["label"] for item in pending_handoffs]
                     handoff_placeholder.caption("\n".join(visible_labels))
                     handoff_messages = list(pending_handoffs)
+                    responding_agent = pending_handoffs[-1].get(
+                        "agent_label", responding_agent
+                    )
+                    agent_placeholder.caption(f"응답 에이전트: {responding_agent}")
                     status_container.update(label=visible_labels[-1], state="running")
 
                 if event.type != "raw_response_event":
@@ -82,6 +92,7 @@ async def run_restaurant_bot():
                         text_placeholder.write(response_text)
         except InputGuardrailTripwireTriggered as exc:
             info = exc.guardrail_result.output.output_info
+            responding_agent = "Input Guardrail"
             response_text = (
                 "저는 레스토랑 관련 질문에 대해서만 도와드리고 있어요. "
                 "메뉴를 확인하거나, 예약하거나, 음식을 주문할 수 있어요."
@@ -89,19 +100,23 @@ async def run_restaurant_bot():
                 else "불편한 표현은 도와드리기 어려워요. 메뉴, 주문, 예약, 불만 접수처럼 레스토랑 관련 내용으로 말씀해 주세요."
             )
             status_container.update(label="입력 가드레일 작동", state="complete")
+            agent_placeholder.caption(f"응답 에이전트: {responding_agent}")
             text_placeholder.write(response_text)
             handoff_messages = [{"label": "[input guardrail 작동]"}]
         except OutputGuardrailTripwireTriggered as exc:
+            responding_agent = "Output Guardrail"
             response_text = (
                 "죄송합니다. 더 정중하고 안전한 방식으로만 안내드릴 수 있어요. "
                 "메뉴, 주문, 예약, 불만 해결과 관련된 내용으로 다시 말씀해 주세요."
             )
             status_container.update(label="출력 가드레일 작동", state="complete")
+            agent_placeholder.caption(f"응답 에이전트: {responding_agent}")
             text_placeholder.write(response_text)
             handoff_messages = [{"label": "[output guardrail 작동]"}]
 
         st.session_state["restaurant_bot_chat_history"].append(
             {
+                "agent_label": responding_agent,
                 "role": "assistant",
                 "text": response_text,
                 "handoffs": handoff_messages,

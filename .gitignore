@@ -23,6 +23,8 @@ wheels/
 # VSCode
 .vscode/
 
+.streamlit/
+
 /restaurant-bot/__pycache__/
 /restaurant-bot/*.py[oc]
 /restaurant-bot/build/

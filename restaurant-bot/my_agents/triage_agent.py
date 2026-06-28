@@ -62,18 +62,17 @@ def dynamic_triage_agent_instructions(
     """
 
 
-def handle_handoff(
-    wrapper: RunContextWrapper[RestaurantCustomerContext],
-    input_data: HandoffData,
-):
-    message = f"[{input_data.issue_type}]"
-    handoff_log = {
-        "label": message,
-    }
-    st.session_state["restaurant_bot_pending_handoffs"].append(handoff_log)
-
-
 def make_handoff(agent: Agent):
+    def handle_handoff(
+        wrapper: RunContextWrapper[RestaurantCustomerContext],
+        input_data: HandoffData,
+    ):
+        handoff_log = {
+            "label": f"[Triage Agent -> {agent.name}]",
+            "agent_label": agent.name,
+        }
+        st.session_state["restaurant_bot_pending_handoffs"].append(handoff_log)
+
     return handoff(
         agent=agent,
         on_handoff=handle_handoff,
